@@ -70,3 +70,4 @@ Published via GitHub Actions to GHCR:
 
 On `main`, images are tagged with `latest` and the commit SHA.
 
+test
