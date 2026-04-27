@@ -61,3 +61,12 @@ cd web
 npm run build
 ```
 
+## Container images
+
+Published via GitHub Actions to GHCR:
+
+- `ghcr.io/<owner>/slok-dashboard-backend`
+- `ghcr.io/<owner>/slok-dashboard-frontend`
+
+On `main`, images are tagged with `latest` and the commit SHA.
+
