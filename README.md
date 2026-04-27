@@ -39,3 +39,25 @@ The ServiceAccount should have read-only access to:
 
 - `servicelevelobjectives.observability.slok.io`
 - `prometheusrules.monitoring.coreos.com`
+
+## Frontend
+
+A lightweight React + TypeScript + Vite UI lives in `web/`.
+
+### Run locally
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+The Vite dev server proxies `/api` to `http://localhost:8080`.
+
+### Build
+
+```bash
+cd web
+npm run build
+```
+
