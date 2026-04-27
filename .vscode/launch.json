@@ -1,0 +1,39 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug slok-dashboard backend",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/dashboard",
+      "args": [
+        "--addr",
+        ":8080"
+      ],
+      "env": {
+        "SLOK_DASHBOARD_ADDR": ":8080",
+        "KUBECONFIG": "${env:HOME}/.kube/config"
+      },
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Debug slok-dashboard backend namespace scoped",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/dashboard",
+      "args": [
+        "--addr",
+        ":8080",
+        "--namespace",
+        "default"
+      ],
+      "env": {
+        "SLOK_DASHBOARD_ADDR": ":8080",
+        "KUBECONFIG": "${env:HOME}/.kube/config"
+      },
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}
