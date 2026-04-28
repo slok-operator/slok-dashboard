@@ -116,3 +116,20 @@ export interface ResourceRef {
   namespace?: string
   exists: boolean
 }
+
+
+export interface SLOTimeseriesResponse {
+  objectiveId: string
+  range: string
+  step: string
+  series: {
+    availability: TimeseriesPoint[]
+    target: TimeseriesPoint[]
+    burnRate: TimeseriesPoint[]
+  }
+}
+
+export interface TimeseriesPoint {
+  timestamp: string
+  value: number
+}

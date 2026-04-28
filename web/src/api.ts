@@ -1,4 +1,4 @@
-import type { ListSLOsResponse, SLODetail } from './types'
+import type { ListSLOsResponse, SLODetail, SLOTimeseriesResponse } from './types'
 
 async function requestJSON<T>(path: string): Promise<T> {
   const response = await fetch(path, {
@@ -28,4 +28,10 @@ export function listSLOs() {
 
 export function getSLO(namespace: string, name: string) {
   return requestJSON<SLODetail>(`/api/slos/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)
+}
+
+
+export function getSLOTimeseries(namespace: string, name: string, range = '6h', step = '5m') {
+  const params = new URLSearchParams({ range, step })
+  return requestJSON<SLOTimeseriesResponse>(`/api/slos/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/timeseries?${params}`)
 }

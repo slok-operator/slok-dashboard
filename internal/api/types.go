@@ -128,3 +128,21 @@ type ResourceRef struct {
 	Namespace string `json:"namespace,omitempty"`
 	Exists    bool   `json:"exists"`
 }
+
+type SLOTimeseriesResponse struct {
+	ObjectiveID string            `json:"objectiveId"`
+	Range       string            `json:"range"`
+	Step        string            `json:"step"`
+	Series      SLOTimeseriesData `json:"series"`
+}
+
+type SLOTimeseriesData struct {
+	Availability []TimeseriesPoint `json:"availability"`
+	Target       []TimeseriesPoint `json:"target"`
+	BurnRate     []TimeseriesPoint `json:"burnRate"`
+}
+
+type TimeseriesPoint struct {
+	Timestamp time.Time `json:"timestamp"`
+	Value     float64   `json:"value"`
+}

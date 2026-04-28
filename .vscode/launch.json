@@ -13,7 +13,8 @@
       ],
       "env": {
         "SLOK_DASHBOARD_ADDR": ":8080",
-        "KUBECONFIG": "${env:HOME}/.kube/config"
+        "KUBECONFIG": "${env:HOME}/.kube/config",
+        "PROMETHEUS_URL": "http://localhost:9090"
       },
       "cwd": "${workspaceFolder}"
     },

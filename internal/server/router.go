@@ -12,6 +12,7 @@ func NewRouter(handler *api.Handler) http.Handler {
 	mux.HandleFunc("GET /api/healthz", handler.Healthz)
 	mux.HandleFunc("GET /api/slos", handler.ListSLOs)
 	mux.HandleFunc("GET /api/slos/{namespace}/{name}", handler.GetSLO)
+	mux.HandleFunc("GET /api/slos/{namespace}/{name}/timeseries", handler.GetSLOTimeseries)
 
 	return withCORS(withJSON(mux))
 }

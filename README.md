@@ -31,7 +31,29 @@ SLOK_NAMESPACE=default make run
 GET /api/healthz
 GET /api/slos
 GET /api/slos/{namespace}/{name}
+GET /api/slos/{namespace}/{name}/timeseries
 ```
+### SLO trend charts
+
+The dashboard can plot SLO availability trends using Slok recording rules from Prometheus.
+Configure the backend with:
+
+```bash
+PROMETHEUS_URL=http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090 make run
+```
+
+The UI calls:
+
+```text
+GET /api/slos/{namespace}/{name}/timeseries?range=6h&step=5m
+```
+
+It uses the same base query as the Grafana dashboard:
+
+```promql
+100 - (slok:sli_error_rate:5m{objective_id="<slo>/<objective>"} * 100)
+```
+
 
 ### Required RBAC
 
