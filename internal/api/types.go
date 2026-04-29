@@ -140,6 +140,7 @@ type SLOTimeseriesData struct {
 	Availability []TimeseriesPoint `json:"availability"`
 	Target       []TimeseriesPoint `json:"target"`
 	BurnRate     []TimeseriesPoint `json:"burnRate"`
+	ErrorBudget  []TimeseriesPoint `json:"errorBudget"`
 }
 
 type TimeseriesPoint struct {

@@ -86,6 +86,7 @@ func (h *Handler) GetSLOTimeseries(w http.ResponseWriter, r *http.Request) {
 
 	availabilityQuery := fmt.Sprintf(`100 - (slok:sli_error_rate:5m{objective_id=%q} * 100)`, objectiveID)
 	burnRateQuery := fmt.Sprintf(`slok:burn_rate:5m{objective_id=%q}`, objectiveID)
+	errorBudgetQuery := fmt.Sprintf(`clamp_min(100 - (slok:burn_rate:30d{objective_id=%q} * 100), 0)`, objectiveID)
 
 	availability, err := h.metrics.QueryRange(r, availabilityQuery, start, end, step)
 	if err != nil {
@@ -93,6 +94,11 @@ func (h *Handler) GetSLOTimeseries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	burnRate, err := h.metrics.QueryRange(r, burnRateQuery, start, end, step)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	errorBudget, err := h.metrics.QueryRange(r, errorBudgetQuery, start, end, step)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -106,6 +112,7 @@ func (h *Handler) GetSLOTimeseries(w http.ResponseWriter, r *http.Request) {
 			Availability: availability,
 			Target:       targetSeries(availability, slo.Target),
 			BurnRate:     burnRate,
+			ErrorBudget:  errorBudget,
 		},
 	})
 }

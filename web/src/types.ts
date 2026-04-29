@@ -126,6 +126,7 @@ export interface SLOTimeseriesResponse {
     availability: TimeseriesPoint[]
     target: TimeseriesPoint[]
     burnRate: TimeseriesPoint[]
+    errorBudget: TimeseriesPoint[]
   }
 }
 

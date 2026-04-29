@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { getSLO, getSLOTimeseries, listSLOs } from './api'
 import type { SLODetail, SLOSummary, SLOTimeseriesResponse, TimeseriesPoint } from './types'
 
 type Filter = 'all' | 'healthy' | 'warning' | 'critical' | 'other'
 type TrendRange = '4w' | '1w' | '1d' | '12h' | '1h'
+type TrendRangeMode = TrendRange | 'custom'
+type CustomRangeUnit = 'm' | 'h' | 'd' | 'w'
 type View = 'list' | 'trend'
 
 const TREND_PRESETS: Record<TrendRange, { range: string; step: string; label: string; subtitle: string }> = {
@@ -15,6 +17,7 @@ const TREND_PRESETS: Record<TrendRange, { range: string; step: string; label: st
 }
 
 const TREND_RANGE_ORDER: TrendRange[] = ['4w', '1w', '1d', '12h', '1h']
+const CUSTOM_RANGE_UNITS: CustomRangeUnit[] = ['m', 'h', 'd', 'w']
 
 const percentFormatter = new Intl.NumberFormat('en-US', {
   style: 'percent',
@@ -120,8 +123,30 @@ function trendRangeToMilliseconds(range: string) {
   return amount * multipliers[unit]
 }
 
+function stepForRange(range: string) {
+  const duration = trendRangeToMilliseconds(range)
+  const targetPoints = 120
+  const rawStepSeconds = Math.max(60, Math.round(duration / targetPoints / 1000))
+  const candidates = [60, 300, 900, 1800, 3600, 21600, 86400]
+  const selected = candidates.find((candidate) => candidate >= rawStepSeconds) ?? candidates[candidates.length - 1]
+
+  if (selected % 86400 === 0) return `${selected / 86400}d`
+  if (selected % 3600 === 0) return `${selected / 3600}h`
+  if (selected % 60 === 0) return `${selected / 60}m`
+  return `${selected}s`
+}
+
+function customRangeValue(amount: number, unit: CustomRangeUnit) {
+  const safeAmount = clamp(Math.floor(amount), 1, unit === 'm' ? 1440 : unit === 'h' ? 720 : unit === 'd' ? 365 : 52)
+  return `${safeAmount}${unit}`
+}
+
 function evenlySpacedTimes(start: number, end: number, count: number) {
   return Array.from({ length: count }, (_, index) => start + ((end - start) * index) / Math.max(count - 1, 1))
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max)
 }
 
 function trendTickLabel(timestamp: string | number, range: string) {
@@ -147,7 +172,9 @@ function App() {
   const [timeseries, setTimeseries] = useState<SLOTimeseriesResponse | null>(null)
   const [timeseriesLoading, setTimeseriesLoading] = useState(false)
   const [timeseriesError, setTimeseriesError] = useState<string | null>(null)
-  const [trendRange, setTrendRange] = useState<TrendRange>('1w')
+  const [trendRangeMode, setTrendRangeMode] = useState<TrendRangeMode>('1w')
+  const [customRangeAmount, setCustomRangeAmount] = useState(3)
+  const [customRangeUnit, setCustomRangeUnit] = useState<CustomRangeUnit>('h')
 
   useEffect(() => {
     let active = true
@@ -205,12 +232,13 @@ function App() {
     }
 
     const controller = new AbortController()
-    const preset = TREND_PRESETS[trendRange]
+    const range = trendRangeMode === 'custom' ? customRangeValue(customRangeAmount, customRangeUnit) : TREND_PRESETS[trendRangeMode].range
+    const step = trendRangeMode === 'custom' ? stepForRange(range) : TREND_PRESETS[trendRangeMode].step
 
     setTimeseriesLoading(true)
     setTimeseriesError(null)
 
-    getSLOTimeseries(selected.namespace, selected.name, preset.range, preset.step)
+    getSLOTimeseries(selected.namespace, selected.name, range, step)
       .then((response) => {
         if (!controller.signal.aborted) setTimeseries(response)
       })
@@ -224,7 +252,7 @@ function App() {
       })
 
     return () => controller.abort()
-  }, [selected, trendRange, view])
+  }, [selected, trendRangeMode, customRangeAmount, customRangeUnit, view])
 
   const namespaces = useMemo(() => Array.from(new Set(items.map((item) => item.namespace))).sort(), [items])
 
@@ -236,7 +264,18 @@ function App() {
     })
   }, [items, filter, namespaceFilter, query])
 
-  const selectedTrendRange = TREND_PRESETS[trendRange].range
+  const selectedTrendRange = trendRangeMode === 'custom' ? customRangeValue(customRangeAmount, customRangeUnit) : TREND_PRESETS[trendRangeMode].range
+  const selectedTrendStep = trendRangeMode === 'custom' ? stepForRange(selectedTrendRange) : TREND_PRESETS[trendRangeMode].step
+  const availabilitySeries = timeseries?.series.availability ?? []
+  const targetSeries = timeseries?.series.target ?? []
+  const errorBudgetSeries = timeseries?.series.errorBudget ?? []
+  const burnRateSeries = timeseries?.series.burnRate ?? []
+  const tooltipSeries = [
+    { label: 'Availability', series: availabilitySeries, suffix: '%' },
+    { label: 'Target', series: targetSeries, suffix: '%' },
+    { label: 'Error budget', series: errorBudgetSeries, suffix: '%' },
+    { label: 'Burn rate', series: burnRateSeries, suffix: 'x' },
+  ]
 
   if (view === 'trend') {
     return (
@@ -278,20 +317,48 @@ function App() {
                     <button
                       key={item}
                       type="button"
-                      className={`trend-range-button ${trendRange === item ? 'active' : ''}`}
-                      onClick={() => setTrendRange(item)}
+                      className={`trend-range-button ${trendRangeMode === item ? 'active' : ''}`}
+                      onClick={() => setTrendRangeMode(item)}
                     >
                       <span>{preset.label}</span>
                       <small>{preset.subtitle}</small>
                     </button>
                   )
                 })}
+                <div className={`custom-range-control ${trendRangeMode === 'custom' ? 'active' : ''}`}>
+                  <button type="button" className="trend-range-button custom-range-toggle" onClick={() => setTrendRangeMode('custom')}>
+                    <span>Custom</span>
+                    <small>{customRangeValue(customRangeAmount, customRangeUnit)}</small>
+                  </button>
+                  <div className="custom-range-fields">
+                    <input
+                      aria-label="Custom range amount"
+                      min="1"
+                      type="number"
+                      value={customRangeAmount}
+                      onChange={(event) => {
+                        setCustomRangeAmount(Number(event.target.value) || 1)
+                        setTrendRangeMode('custom')
+                      }}
+                    />
+                    <select
+                      aria-label="Custom range unit"
+                      value={customRangeUnit}
+                      onChange={(event) => {
+                        setCustomRangeUnit(event.target.value as CustomRangeUnit)
+                        setTrendRangeMode('custom')
+                      }}
+                    >
+                      {CUSTOM_RANGE_UNITS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+                    </select>
+                  </div>
+                </div>
               </div>
             </div>
 
             <div className="trend-metrics">
-              <TrendMetric label="Current" value={lastPoint(timeseries?.series.availability)?.value} suffix="%" tone="accent" />
-              <TrendMetric label="Target" value={lastPoint(timeseries?.series.target)?.value} suffix="%" tone="gold" />
+              <TrendMetric label="Availability" value={lastPoint(availabilitySeries)?.value} suffix="%" tone="accent" />
+              <TrendMetric label="Error budget" value={lastPoint(errorBudgetSeries)?.value} suffix="%" tone="gold" />
               <TrendMetric label="Range" value={selectedTrendRange} tone="neutral" />
             </div>
 
@@ -310,14 +377,38 @@ function App() {
                 <strong>No selection</strong>
                 <p>Choose an SLO from the list to inspect its trend.</p>
               </div>
-            ) : timeseries?.series.availability.length ? (
-              <SloTrendChart
-                availability={timeseries.series.availability}
-                target={timeseries.series.target}
-                range={selectedTrendRange}
-                step={timeseries.step}
-                height={640}
-              />
+            ) : availabilitySeries.length ? (
+              <div className="trend-charts-grid">
+                <SloTrendChart
+                  title="Availability"
+                  valueLabel="Current"
+                  availability={availabilitySeries}
+                  target={targetSeries}
+                  targetLabel="Target"
+                  range={selectedTrendRange}
+                  step={timeseries?.step ?? selectedTrendStep}
+                  height={360}
+                  tooltipItems={tooltipSeries}
+                />
+                {errorBudgetSeries.length ? (
+                  <SloTrendChart
+                    title="Error budget remaining"
+                    valueLabel="Remaining"
+                    availability={errorBudgetSeries}
+                    target={[]}
+                    range={selectedTrendRange}
+                    step={timeseries?.step ?? selectedTrendStep}
+                    height={320}
+                    fixedPercentDomain
+                    tooltipItems={tooltipSeries}
+                  />
+                ) : (
+                  <div className="trend-state trend-state-compact">
+                    <strong>Error budget unavailable</strong>
+                    <p>Prometheus returned no 30d burn-rate samples for this SLO.</p>
+                  </div>
+                )}
+              </div>
             ) : (
               <div className="trend-state">
                 <strong>No trend data</strong>
@@ -596,27 +687,52 @@ function TrendMetric({
 }
 
 function SloTrendChart({
+  title,
+  valueLabel = 'Current',
   availability,
   target,
+  targetLabel,
   range,
   step,
   height = 420,
+  fixedPercentDomain = false,
+  tooltipItems = [],
 }: {
+  title: string
+  valueLabel?: string
   availability: TimeseriesPoint[]
   target: TimeseriesPoint[]
+  targetLabel?: string
   range: string
   step: string
   height?: number
+  fixedPercentDomain?: boolean
+  tooltipItems?: { label: string; series: TimeseriesPoint[]; suffix?: string }[]
 }) {
+  const chartId = useId().replace(/:/g, '')
+  const fillId = `${chartId}-trendFill`
+  const strokeId = `${chartId}-trendStroke`
+  const clipId = `${chartId}-trendPlotClip`
   const width = 1400
   const padding = { top: 32, right: 36, bottom: 64, left: 76 }
+  const [hoveredPoint, setHoveredPoint] = useState<{
+    timestamp: string
+    items: { label: string; value: number; suffix?: string }[]
+    x: number
+    y: number
+  } | null>(null)
+  const [zoomDomain, setZoomDomain] = useState<{ start: number; end: number } | null>(null)
+  const [dragSelection, setDragSelection] = useState<{ startX: number; currentX: number } | null>(null)
   const values = [...availability.map((point) => point.value), ...target.map((point) => point.value)]
-  const minValue = Math.max(0, Math.min(...values) - 0.5)
-  const maxValue = Math.min(100, Math.max(...values) + 0.5)
+  const minValue = fixedPercentDomain ? -4 : Math.max(0, Math.min(...values) - 0.5)
+  const maxValue = fixedPercentDomain ? 100 : Math.min(100, Math.max(...values) + 0.5)
   const sampleEnd = new Date(availability[availability.length - 1]?.timestamp ?? Date.now()).getTime()
-  const end = sampleEnd
-  const start = end - trendRangeToMilliseconds(range)
+  const baseEnd = sampleEnd
+  const baseStart = baseEnd - trendRangeToMilliseconds(range)
+  const start = zoomDomain?.start ?? baseStart
+  const end = zoomDomain?.end ?? baseEnd
   const span = Math.max(end - start, 1)
+  const zoomed = Boolean(zoomDomain)
   const plotWidth = width - padding.left - padding.right
   const plotHeight = height - padding.top - padding.bottom
   const yTicks = 6
@@ -640,53 +756,221 @@ function SloTrendChart({
     return `${path} L ${endX} ${baseY} L ${startX} ${baseY} Z`
   }
   const xTickTimes = evenlySpacedTimes(start, end, xTicks)
-  const yTickValues = Array.from({ length: yTicks }, (_, index) => minValue + ((maxValue - minValue) * index) / Math.max(yTicks - 1, 1))
+  const yTickValues = fixedPercentDomain
+    ? Array.from({ length: yTicks }, (_, index) => (100 * index) / Math.max(yTicks - 1, 1))
+    : Array.from({ length: yTicks }, (_, index) => minValue + ((maxValue - minValue) * index) / Math.max(yTicks - 1, 1))
   const latest = availability[availability.length - 1]
   const targetPoint = target[target.length - 1]
   const currentValue = latest ? `${numberFormatter.format(latest.value)}%` : '—'
   const targetValue = targetPoint ? `${numberFormatter.format(targetPoint.value)}%` : '—'
+  const selectionLeft = dragSelection ? Math.min(dragSelection.startX, dragSelection.currentX) : 0
+  const selectionWidth = dragSelection ? Math.abs(dragSelection.currentX - dragSelection.startX) : 0
+
+  useEffect(() => {
+    setHoveredPoint(null)
+    setZoomDomain(null)
+    setDragSelection(null)
+  }, [availability, range, step])
+
+  const timeFromChartX = (chartX: number) => {
+    const boundedX = clamp(chartX, padding.left, width - padding.right)
+    const ratio = (boundedX - padding.left) / Math.max(plotWidth, 1)
+    return start + ratio * span
+  }
+
+  const chartXFromEvent = (event: ReactMouseEvent<SVGSVGElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    const rawX = ((event.clientX - rect.left) / Math.max(rect.width, 1)) * width
+    return clamp(rawX, padding.left, width - padding.right)
+  }
+
+  const interpolateAt = (series: TimeseriesPoint[], timestamp: number) => {
+    if (!series.length) return null
+
+    const points = series
+      .map((point) => ({ ...point, time: new Date(point.timestamp).getTime() }))
+      .filter((point) => Number.isFinite(point.time))
+      .sort((left, right) => left.time - right.time)
+
+    if (!points.length) return null
+
+    if (timestamp <= points[0].time) {
+      return { timestamp, value: points[0].value }
+    }
+    if (timestamp >= points[points.length - 1].time) {
+      return { timestamp, value: points[points.length - 1].value }
+    }
+
+    const rightIndex = points.findIndex((point) => point.time >= timestamp)
+    const right = points[rightIndex]
+    const left = points[Math.max(0, rightIndex - 1)]
+    const ratio = (timestamp - left.time) / Math.max(right.time - left.time, 1)
+    return {
+      timestamp,
+      value: left.value + (right.value - left.value) * ratio,
+    }
+  }
+
+  const handleMouseMove = (event: ReactMouseEvent<SVGSVGElement>) => {
+    if (!availability.length) return
+
+    const cursorX = chartXFromEvent(event)
+    const cursorTime = timeFromChartX(cursorX)
+    const interpolated = interpolateAt(availability, cursorTime)
+
+    if (dragSelection) {
+      setDragSelection((current) => current ? { ...current, currentX: cursorX } : null)
+    }
+
+    if (!interpolated) return
+
+    setHoveredPoint({
+      timestamp: new Date(interpolated.timestamp).toISOString(),
+      items: (tooltipItems.length ? tooltipItems : [{ label: valueLabel, series: availability, suffix: '%' }])
+        .flatMap((item) => {
+          const value = interpolateAt(item.series, cursorTime)?.value
+          return typeof value === 'number' ? [{ label: item.label, value, suffix: item.suffix }] : []
+        }),
+      x: cursorX,
+      y: y(interpolated.value),
+    })
+  }
+
+  const handleMouseDown = (event: ReactMouseEvent<SVGSVGElement>) => {
+    if (!availability.length) return
+    const cursorX = chartXFromEvent(event)
+    setDragSelection({ startX: cursorX, currentX: cursorX })
+  }
+
+  const handleMouseUp = () => {
+    if (!dragSelection) return
+
+    const leftX = Math.min(dragSelection.startX, dragSelection.currentX)
+    const rightX = Math.max(dragSelection.startX, dragSelection.currentX)
+    setDragSelection(null)
+
+    if (rightX - leftX < 12) return
+
+    const nextStart = timeFromChartX(leftX)
+    const nextEnd = timeFromChartX(rightX)
+    if (nextEnd - nextStart < 1000) return
+
+    setZoomDomain({ start: nextStart, end: nextEnd })
+    setHoveredPoint(null)
+  }
 
   return (
     <div className="trend-chart-shell trend-chart-shell-large">
-      <div className="trend-chart-meta">
-        <span>{`Last ${range}`}</span>
-        <span>Step {step}</span>
+      <div className="trend-chart-title">
+        <h3>{title}</h3>
       </div>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="SLO availability trend">
-        <defs>
-          <linearGradient id="trendFill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="rgba(34, 211, 238, 0.32)" />
-            <stop offset="100%" stopColor="rgba(34, 211, 238, 0.02)" />
-          </linearGradient>
-          <linearGradient id="trendStroke" x1="0" x2="1" y1="0" y2="0">
-            <stop offset="0%" stopColor="#22d3ee" />
-            <stop offset="100%" stopColor="#8b5cf6" />
-          </linearGradient>
-        </defs>
-        {yTickValues.map((tick) => (
-          <g key={tick}>
-            <line className="chart-grid" x1={padding.left} x2={width - padding.right} y1={y(tick)} y2={y(tick)} />
-            <text className="chart-label" x="16" y={y(tick) + 4}>{numberFormatter.format(tick)}%</text>
-          </g>
-        ))}
-        {xTickTimes.map((tickTime) => {
-          const tick = new Date(tickTime).toISOString()
-          return (
-            <g key={tickTime}>
-              <line className="chart-grid chart-grid-vertical" x1={x(tick)} x2={x(tick)} y1={padding.top} y2={height - padding.bottom} />
-              <text className="chart-label chart-label-x" x={x(tick)} y={height - 18}>{trendTickLabel(tickTime, range)}</text>
+      <div className="trend-chart-meta">
+        <span>{zoomed ? 'Custom zoom' : `Last ${range}`}</span>
+        <span>Step {step}</span>
+        {zoomed ? (
+          <button type="button" className="chart-reset-button" onClick={() => setZoomDomain(null)}>
+            Reset zoom
+          </button>
+        ) : (
+          <span className="chart-help">Drag to zoom</span>
+        )}
+      </div>
+      <div className="trend-chart-canvas">
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          role="img"
+          aria-label={`SLO ${title} trend`}
+          onMouseMove={handleMouseMove}
+          onMouseDown={handleMouseDown}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={() => {
+            setHoveredPoint(null)
+            setDragSelection(null)
+          }}
+        >
+          <defs>
+            <linearGradient id={fillId} x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="rgba(34, 211, 238, 0.32)" />
+              <stop offset="100%" stopColor="rgba(34, 211, 238, 0.02)" />
+            </linearGradient>
+            <linearGradient id={strokeId} x1="0" x2="1" y1="0" y2="0">
+              <stop offset="0%" stopColor="#22d3ee" />
+              <stop offset="100%" stopColor="#8b5cf6" />
+            </linearGradient>
+            <clipPath id={clipId}>
+              <rect x={padding.left - 8} y={padding.top - 8} width={plotWidth + 16} height={plotHeight + 16} />
+            </clipPath>
+          </defs>
+          {yTickValues.map((tick) => (
+            <g key={tick}>
+              <line className="chart-grid" x1={padding.left} x2={width - padding.right} y1={y(tick)} y2={y(tick)} />
+              <text className="chart-label" x="16" y={y(tick) + 4}>{numberFormatter.format(tick)}%</text>
             </g>
-          )
-        })}
-        <path className="chart-area chart-area-availability" d={area(availability)} />
-        {target.length ? <path className="chart-line chart-line-target" d={line(target)} /> : null}
-        <path className="chart-line chart-line-availability" d={line(availability)} />
-        {latest ? <circle className="chart-dot" cx={x(latest.timestamp)} cy={y(latest.value)} r="6" /> : null}
-        {targetPoint ? <circle className="chart-dot chart-dot-target" cx={x(targetPoint.timestamp)} cy={y(targetPoint.value)} r="5" /> : null}
-      </svg>
+          ))}
+          {xTickTimes.map((tickTime) => {
+            const tick = new Date(tickTime).toISOString()
+            return (
+              <g key={tickTime}>
+                <line className="chart-grid chart-grid-vertical" x1={x(tick)} x2={x(tick)} y1={padding.top} y2={height - padding.bottom} />
+                <text className="chart-label chart-label-x" x={x(tick)} y={height - 18}>{trendTickLabel(tickTime, range)}</text>
+              </g>
+            )
+          })}
+          <g clipPath={`url(#${clipId})`}>
+            <path className="chart-area chart-area-availability" style={{ fill: `url(#${fillId})` }} d={area(availability)} />
+            {target.length ? <path className="chart-line chart-line-target" d={line(target)} /> : null}
+            <path className="chart-line chart-line-availability" style={{ stroke: `url(#${strokeId})` }} d={line(availability)} />
+            {latest ? <circle className="chart-dot" cx={x(latest.timestamp)} cy={y(latest.value)} r="6" /> : null}
+            {targetPoint ? <circle className="chart-dot chart-dot-target" cx={x(targetPoint.timestamp)} cy={y(targetPoint.value)} r="5" /> : null}
+          </g>
+          {dragSelection && selectionWidth > 2 ? (
+            <rect
+              className="chart-zoom-selection"
+              x={selectionLeft}
+              y={padding.top}
+              width={selectionWidth}
+              height={plotHeight}
+            />
+          ) : null}
+          {hoveredPoint ? (
+            <g className="chart-hover-group">
+              <line
+                className="chart-crosshair"
+                x1={hoveredPoint.x}
+                x2={hoveredPoint.x}
+                y1={padding.top}
+                y2={height - padding.bottom}
+              />
+              <circle className="chart-dot chart-dot-hover" cx={hoveredPoint.x} cy={hoveredPoint.y} r="8" />
+              <circle className="chart-dot chart-dot-hover-ring" cx={hoveredPoint.x} cy={hoveredPoint.y} r="15" />
+            </g>
+          ) : null}
+        </svg>
+
+        {hoveredPoint ? (
+          <div
+            className={`trend-tooltip ${hoveredPoint.y < height * 0.24 ? 'trend-tooltip-below' : 'trend-tooltip-above'}`}
+            style={{
+              left: `${(clamp(hoveredPoint.x, 140, width - 140) / width) * 100}%`,
+              top: `${(hoveredPoint.y / height) * 100}%`,
+            }}
+          >
+            <span className="trend-tooltip-time">{formatDate(hoveredPoint.timestamp)}</span>
+            <div className="trend-tooltip-values">
+              {hoveredPoint.items.map((item) => (
+                <div key={item.label} className="trend-tooltip-row">
+                  <span>{item.label}</span>
+                  <strong>{`${numberFormatter.format(item.value)}${item.suffix ?? ''}`}</strong>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
       <div className="trend-footnote">
-        <span>Current <strong>{currentValue}</strong></span>
-        <span>Target <strong>{targetValue}</strong></span>
+        <span>{valueLabel} <strong>{currentValue}</strong></span>
+        {targetLabel ? <span>{targetLabel} <strong>{targetValue}</strong></span> : null}
+        <span>{zoomed ? 'Drag again to zoom deeper' : 'Drag across the plot to zoom'}</span>
       </div>
     </div>
   )
